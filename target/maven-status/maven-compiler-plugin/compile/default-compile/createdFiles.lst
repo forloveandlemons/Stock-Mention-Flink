@@ -1,5 +1,8 @@
-bobostockanalysis/StreamingJob.class
+bobostockanalysis/calculation/WindowCorrelation.class
 bobostockanalysis/sources/StockMentionCountSource.class
-bobostockanalysis/util/SplitPathUtil.class
+bobostockanalysis/StreamingJob$1.class
 bobostockanalysis/datatypes/StockMentionCount.class
+bobostockanalysis/StreamingJob.class
+bobostockanalysis/util/SplitPathUtil.class
 bobostockanalysis/BatchJob.class
+bobostockanalysis/connector/StockMentionCountSchema.class

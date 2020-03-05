@@ -18,23 +18,23 @@
 
 package bobostockanalysis;
 
-import bobostockanalysis.datatypes.StockMentionCount;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.java.tuple.Tuple5;
+import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
 import org.apache.flink.streaming.api.TimeCharacteristic;
-
-import java.io.File;
+import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.connectors.cassandra.CassandraSink;
 import java.util.Properties;
-
-import bobostockanalysis.sources.StockMentionCountSource;
+import java.lang.System;
 import bobostockanalysis.datatypes.StockMentionCount;
+import bobostockanalysis.sources.StockMentionCountSource;
 import bobostockanalysis.connector.StockMentionCountSchema;
-
+import bobostockanalysis.calculation.WindowCorrelation;
 
 /**
  * Skeleton for a Flink Streaming Job.
@@ -53,14 +53,17 @@ public class StreamingJob {
 	public static void main(String[] args) throws Exception {
 		String inputTopic = "bobo_stock_data";
 		String brokerList = "localhost:9092";
-		produceData(inputTopic, brokerList);
-		consumeData(inputTopic, brokerList);
+		String outputTopic = "bobo_stock_data_output";
+		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		produceData(env, inputTopic, brokerList);
+		consumeData(env, inputTopic, outputTopic, brokerList);
+		env.execute("Flink Streaming Java API Skeleton");
 
 	}
 
-	public static void produceData(String topic, String brokerList) throws Exception {
+	private static void produceData(StreamExecutionEnvironment env, String topic, String brokerList) throws Exception {
 		// set up the streaming execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		//final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
 		// execute program
 		DataStream<String> AAPLStream = env.addSource(new StockMentionCountSource("AAPL"));
@@ -77,20 +80,42 @@ public class StreamingJob {
 		AMZNStream.addSink(myProducer);
 		GOOGStream.addSink(myProducer);
 
-		env.execute("Flink Streaming Java API Skeleton");
 	}
 
-	public static void consumeData(String topic, String brokerList) throws Exception {
+	private static void consumeData(StreamExecutionEnvironment env, String inputTopic, String outputTopic, String brokerList) throws Exception {
 		// set up the streaming execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		Properties props = new Properties();
 		props.setProperty("bootstrap.servers", brokerList);
-		props.setProperty("group.id", "test");
+		props.setProperty("group.id", "test2");
 
-		DataStream<String> stream = env.addSource(new FlinkKafkaConsumer<>(topic, new SimpleStringSchema(), props));
+		DataStream<StockMentionCount> stream = env.addSource(new FlinkKafkaConsumer<>(inputTopic, new StockMentionCountSchema(), props))
+				.assignTimestampsAndWatermarks(new AscendingTimestampExtractor<StockMentionCount>() {
+					@Override
+					public long extractAscendingTimestamp(StockMentionCount smc) {
+						return System.currentTimeMillis();
+					}
+				});
 
-		env.execute("Flink Streaming Java API Skeleton");
+		DataStream<Tuple5<String, String, String, Long, Double>> rollingCorrelation = stream
+				.windowAll(TumblingEventTimeWindows.of(Time.milliseconds(5000)))
+				.process(new WindowCorrelation());
+
+		CassandraSink.addSink(rollingCorrelation)
+				.setQuery("INSERT INTO bobo_stock_analysis.corrrelation_result(ds, stock1, stock2, eventtime, correlation) values (?, ?, ?, ?, ?);")
+				.setHost("127.0.0.1")
+				.build();
+
+//		DataStream<String> rollingCorrelation = stream
+//				.windowAll(TumblingEventTimeWindows.of(Time.milliseconds(5000)))
+//				.process(new WindowCorrelation())
+//				.map(t -> t.f0 + "," + t.f1 + "," + t.f2.toString() + "," + t.f3.toString() + "," + t.f4);
+
+//		FlinkKafkaProducer<String> myProducer = new FlinkKafkaProducer<String>(brokerList, outputTopic, new SimpleStringSchema());
+//		myProducer.setWriteTimestampToKafka(true);
+//		rollingCorrelation.addSink(myProducer);
+
 	}
 
 
